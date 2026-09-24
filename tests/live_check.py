@@ -1,0 +1,24 @@
+"""Opt-in live smoke test: python tests/live_check.py URL PLATFORM [MP4 MP3]."""
+import sys
+from pathlib import Path
+import tempfile
+import subprocess
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import imageio_ffmpeg
+from downloader import inspect_video, download_media, validate_url, video_qualities
+
+
+if __name__ == "__main__":
+    url, platform, *kinds = sys.argv[1:]
+    url = validate_url(url, platform)
+    info = inspect_video(url)
+    qualities = video_qualities(info)
+    print(f"{platform}: metadata OK; resolutions={qualities}", flush=True)
+    for kind in kinds or ["MP4", "MP3"]:
+        quality = min(qualities) if kind == "MP4" else 128
+        with tempfile.TemporaryDirectory(prefix="getvideo-live-") as directory:
+            path = download_media(url, kind, quality, directory)
+            # Decode a sample of the real downloaded file, not just its extension.
+            subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error", "-i", str(path), "-t", "2", "-f", "null", "-"], check=True, capture_output=True)
+            print(f"{platform}: {kind} download and decode OK ({path.stat().st_size} bytes)", flush=True)
