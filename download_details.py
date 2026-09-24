@@ -11,7 +11,7 @@ def format_size(size):
 def download_filename(title, kind):
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', "", title).strip().rstrip(". ")
     # Accept a pasted filename without doubling its extension.
-    name = re.sub(r"\.(mp3|mp4)$", "", name, flags=re.IGNORECASE).rstrip(". ")
+    name = re.sub(r"\.(mp3|mp4|zip|jpg|jpeg|png|webp|avif|gif)$", "", name, flags=re.IGNORECASE).rstrip(". ")
     name = name[:120].rstrip(". ") or "GetVideo"
     if re.match(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)", name, re.IGNORECASE):
         name = "GetVideo-" + name

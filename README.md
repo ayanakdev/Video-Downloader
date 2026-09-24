@@ -20,6 +20,12 @@ FFmpeg is supplied by imageio-ffmpeg, with an installed system FFmpeg taking pre
 
 ## Flow
 
+Instagram and TikTok now have **Reel**, **Post**, and **Carousel** selectors. Reel retains MP4/MP3 options. Post and Carousel fetch the original images and videos from one post, with individual downloads and an ordered ZIP for multiple items. Both modes keep every item, including mixed image/video carousels; a single-image post needs no ZIP. Downloads show exact sizes and support custom names. The total post limit is 250 MB / 100 items. TikTok photo posts require a full `/@user/photo/id` link (open short links in your browser first).
+
+Photo/gallery extraction uses gallery-dl for TikTok and the public-post request flow in yt-dlp for Instagram. Some posts require authentication or are blocked by the platform, especially on cloud hosting; those return an error rather than a partial gallery. No browser cookies are loaded automatically. The Instagram gallery adapter uses a yt-dlp internal extraction hook, so verify it when updating yt-dlp.
+
+Deploy the updated `requirements.txt`, `gallery_downloads.py`, `gallery_ui.py`, `app.py`, and `download_details.py` together. The local server is still stopped. On 2026-09-25, the supplied Instagram carousel `DdgzPw7knxy` was verified to return all six JPG files. TikTok photo extraction has fixture coverage; a live photo-post example is still needed for verification.
+
 The results include a **File name** field. Edit it and press **Apply name** (or Enter) to set the saved filename; extensions and unsafe filename characters are handled automatically. You can rename an already prepared file without downloading or converting it again. After preparation, the exact file size appears in KB or MB above and inside the download button, for both MP4 and MP3.
 
 Choose a platform and MP4/MP3, paste a single video URL, and press **GetVideo**. Choose an available resolution or MP3 conversion bitrate, press **Prepare**, then preview and download the finished file. MP4 choices reflect source resolutions; other containers are remuxed when necessary. Browser playback depends on support for the source codec. MP3 conversion cannot improve the original audio. Animated discovery, download progress, and conversion status communicate each processing stage.

@@ -6,6 +6,8 @@ import streamlit as st
 
 from downloader import MediaError, PLATFORMS, download_media, inspect_video, validate_url, video_qualities
 from download_details import download_filename, format_size
+from gallery_downloads import download_post
+from gallery_ui import render_gallery
 
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="GetVideo — Keep the good stuff.", page_icon=str(ROOT / "assets/videogetLOGO.png"), layout="centered")
@@ -24,6 +26,8 @@ def clear_result():
     st.session_state.error = None
     st.session_state.pop("download_name", None)
     st.session_state.pop("filename_input", None)
+    for key in ("gallery_files", "gallery_name", "gallery_zip"):
+        st.session_state.pop(key, None)
 
 
 with st.container(key="download_card", border=True):
@@ -35,28 +39,47 @@ with st.container(key="download_card", border=True):
                 st.session_state.platform = platform
                 clear_result()
                 st.rerun()
+    content_type = "Reel"
+    if st.session_state.platform in ("Instagram", "TikTok"):
+        content_type = st.radio("Content type", ["Reel", "Post", "Carousel"], horizontal=True, key="content_type", on_change=clear_result)
+    gallery_mode = content_type != "Reel"
     st.html('<div class="field-label spaced"><b>02</b> Make it yours</div>')
-    st.radio("Choose a file format", ["MP4", "MP3"], key="kind", horizontal=True,
-             format_func=lambda x: "MP4 · Video" if x == "MP4" else "MP3 · Audio", label_visibility="collapsed", on_change=clear_result)
+    if gallery_mode:
+        st.caption("Original images and videos · Individual downloads + ZIP for multiple items")
+    else:
+        st.radio("Choose a file format", ["MP4", "MP3"], key="kind", horizontal=True,
+                 format_func=lambda x: "MP4 · Video" if x == "MP4" else "MP3 · Audio", label_visibility="collapsed", on_change=clear_result)
     st.html('<div class="field-label spaced"><b>03</b> Drop the link</div>')
-    url = st.text_input("Video URL", key="url", placeholder=f"Paste your {st.session_state.platform} video link here…", label_visibility="collapsed", on_change=clear_result)
+    url = st.text_input("Video URL", key="url", placeholder=f"Paste your {st.session_state.platform} {'post' if gallery_mode else 'video'} link here…", label_visibility="collapsed", on_change=clear_result)
     if st.button("GetVideo  →", type="primary", width="stretch", key="get_video"):
         clear_result()
         animation = st.empty()
         try:
             checked_url = validate_url(url, st.session_state.platform)
             animation.html('<div class="processing"><div class="wave"><i></i><i></i><i></i><i></i><i></i></div><strong>Finding the good stuff…</strong><span>Checking your video and available qualities</span></div>')
-            info = inspect_video(checked_url)
-            st.session_state.media = {"info": info, "url": checked_url}
+            if gallery_mode:
+                animation.empty()
+                with st.spinner("Preparing your post…", show_time=True):
+                    progress = st.progress(0, text="Finding the items in your post…")
+                    try:
+                        st.session_state.gallery_files = download_post(checked_url, st.session_state.platform, lambda value, message: progress.progress(value, text=message))
+                    finally:
+                        progress.empty()
+            else:
+                info = inspect_video(checked_url)
+                st.session_state.media = {"info": info, "url": checked_url}
         except (MediaError, ValueError) as error:
             st.session_state.error = str(error)
         except Exception:
             st.session_state.error = "Something interrupted processing. Please try again."
         finally:
             animation.empty()
-    st.html('<div class="under-button">Single videos. Simple downloads. <span>Just the way you like it.</span></div>')
+    st.html('<div class="under-button">Your favorites. Simple downloads. <span>Just the way you like it.</span></div>')
     if st.session_state.error:
         st.error(st.session_state.error)
+
+if st.session_state.get("gallery_files"):
+    render_gallery(st.session_state.gallery_files)
 
 if st.session_state.media:
     media = st.session_state.media
@@ -121,4 +144,4 @@ if st.session_state.media:
                 st.audio(ready["data"], format="audio/mpeg")
 
 st.html('''<section class="benefits"><div><span class="benefit-icon">↗</span><h3>From link to library.</h3><p>A few clicks. Your favorite content,<br>ready to go wherever you do.</p></div><div><span class="benefit-icon">◉</span><h3>Your format. Your call.</h3><p>Keep the whole video or just<br>the audio. You choose.</p></div><div><span class="benefit-icon">⌁</span><h3>Quality that fits.</h3><p>Choose from the resolutions<br>your video actually supports.</p></div></section>
-<footer><span class="footer-brand">Get<span class="red">Video</span><small>Keep what moves you.</small></span><span>Download content you own or have permission to save.<br>Public videos only · Up to 250 MB per file</span></footer>''')
+<footer><span class="footer-brand">Get<span class="red">Video</span><small>Keep what moves you.</small></span><span>Download content you own or have permission to save.<br>Public content only · Up to 250 MB per download</span></footer>''')
