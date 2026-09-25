@@ -90,10 +90,16 @@ def options():
     }
 
 
-def media_options(url):
-    settings = options()
+def is_youtube(url):
     host = (urlparse(url).hostname or "").lower()
-    if any(host == domain or host.endswith("." + domain) for domain in PLATFORMS["YouTube"]):
+    return any(host == domain or host.endswith("." + domain) for domain in PLATFORMS["YouTube"])
+
+
+def media_options(url, client="default"):
+    settings = options()
+    if is_youtube(url) and client != "default":
+        settings["extractor_args"] = {"youtube": {"player_client": [client], "fetch_pot": ["auto"]}}
+    if is_youtube(url) and client == "mweb":
         try:
             version("bgutil-ytdlp-pot-provider")
             endpoint = ensure_provider(settings["js_runtimes"]["node"].get("path"))
@@ -104,6 +110,11 @@ def media_options(url):
             "youtubepot-bgutilhttp": {"base_url": [endpoint]},
         }
     return settings
+
+
+def retryable_error(error):
+    return any(token in str(error).lower() for token in (
+        "403", "forbidden", "410", "requested format is not available", "no suitable formats", "no video formats"))
 
 
 def friendly_error(error):
@@ -140,8 +151,16 @@ def inspect_video(url):
     logger = DownloadLogger()
     settings.update(logger=logger, no_warnings=False)
     try:
-        with yt_dlp.YoutubeDL(settings) as ydl:
-            info = ydl.extract_info(url, download=False)
+        try:
+            with yt_dlp.YoutubeDL(settings) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except yt_dlp.utils.DownloadError as error:
+            if not is_youtube(url) or not retryable_error(error):
+                raise
+            settings = media_options(url, "mweb")
+            settings.update(logger=logger, no_warnings=False)
+            with yt_dlp.YoutubeDL(settings) as ydl:
+                info = ydl.extract_info(url, download=False)
         if not info or info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
             raise MediaError("Please use a link to one video. Playlists and multi-item posts are not supported.")
         if info.get("is_live") or info.get("live_status") == "is_live":
@@ -183,7 +202,11 @@ def download_media(url, kind, quality, directory, progress=None):
                     merge_output_format="mp4", postprocessors=[{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}])
     try:
         selectors = [opts["format"]]
-        if kind == "MP3":
+        youtube = is_youtube(url)
+        if youtube:
+            # Change the request client, not just the format on the same refused client.
+            selectors *= 3
+        elif kind == "MP3":
             # A slash fallback only handles absent formats, not HTTP failures.
             # Re-extract fresh URLs and try other audio sources on a refusal.
             selectors += ["bestaudio[ext=m4a]/bestaudio[ext=webm]", "best[vcodec!=none][acodec!=none]"]
@@ -191,15 +214,23 @@ def download_media(url, kind, quality, directory, progress=None):
             target = Path(directory) if attempt == 0 else Path(directory) / f"attempt-{attempt + 1}"
             target.mkdir(parents=True, exist_ok=True)
             attempt_opts = {**opts, "format": selector, "outtmpl": str(target / "%(title).100B-%(id)s.%(ext)s")}
+            client = ("default", "mweb", "web_safari")[attempt] if youtube else "platform default"
+            if youtube and attempt:
+                try:
+                    attempt_opts.update(media_options(url, client))
+                    attempt_opts.update(logger=logger, no_warnings=False)
+                except MediaError as error:
+                    failures.append(f"Attempt {attempt + 1} ({client}): {error}; {error.details}")
+                    if progress:
+                        progress(0.0, "retrying")
+                    continue
             try:
                 with yt_dlp.YoutubeDL(attempt_opts) as ydl:
                     ydl.extract_info(url, download=True)
                 break
             except yt_dlp.utils.DownloadError as error:
-                failures.append(f"Attempt {attempt + 1} ({selector}): {error}")
-                message = str(error).lower()
-                retryable = any(token in message for token in ("403", "forbidden", "410", "requested format is not available", "no suitable formats"))
-                if not retryable or attempt == len(selectors) - 1:
+                failures.append(f"Attempt {attempt + 1} ({client}; {selector}): {error}")
+                if not retryable_error(error) or attempt == len(selectors) - 1:
                     raise
                 if progress:
                     progress(0.0, "retrying")

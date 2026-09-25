@@ -55,8 +55,28 @@ class AudioRetryTests(unittest.TestCase):
             result = download_media("https://youtu.be/example", "MP3", 192, directory)
             self.assertEqual(result.read_bytes(), b"converted")
             self.assertEqual(result.parent.name, "attempt-2")
-        self.assertNotEqual(attempts[0]["format"], attempts[1]["format"])
+        self.assertNotIn("extractor_args", attempts[0])
+        self.assertEqual(attempts[1]["extractor_args"]["youtube"]["player_client"], ["mweb"])
         self.assertEqual(attempts[1]["postprocessors"][0]["preferredcodec"], "mp3")
+
+    @patch("downloader.yt_dlp.YoutubeDL")
+    def test_mp4_refusal_tries_other_clients_at_requested_resolution(self, factory):
+        attempts = []
+        def client(opts):
+            attempts.append(opts)
+            instance = MagicMock()
+            def extract(*args, **kwargs):
+                if len(attempts) < 3:
+                    raise DownloadError("HTTP Error 403: Forbidden")
+                (Path(opts["outtmpl"]).parent / "finished.mp4").write_bytes(b"video")
+            instance.__enter__.return_value.extract_info.side_effect = extract
+            return instance
+        factory.side_effect = client
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(download_media("https://youtu.be/example", "MP4", 1080, directory).read_bytes(), b"video")
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(attempts[2]["extractor_args"]["youtube"]["player_client"], ["web_safari"])
+        self.assertTrue(all("height=1080" in opts["format"] for opts in attempts))
 
     @patch("downloader.yt_dlp.YoutubeDL")
     def test_authentication_failure_is_not_retried(self, factory):

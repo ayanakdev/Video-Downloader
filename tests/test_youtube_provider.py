@@ -11,7 +11,7 @@ class ProviderTests(unittest.TestCase):
     @patch("downloader.ensure_provider", return_value="http://127.0.0.1:41234")
     def test_youtube_uses_token_service_for_fresh_extractions(self, provider):
         for url in ("https://youtu.be/3NAWiR0gZ5s", "https://www.youtube.com/watch?v=3NAWiR0gZ5s"):
-            args = media_options(url)["extractor_args"]
+            args = media_options(url, "mweb")["extractor_args"]
             self.assertEqual(args["youtube"]["player_client"], ["mweb"])
             self.assertEqual(args["youtube"]["fetch_pot"], ["auto"])
             self.assertEqual(args["youtubepot-bgutilhttp"]["base_url"], [provider.return_value])
@@ -25,9 +25,14 @@ class ProviderTests(unittest.TestCase):
     @patch("downloader.ensure_provider", side_effect=youtube_provider.ProviderError("npm build failed"))
     def test_setup_failure_is_not_mislabeled_as_unavailable_video(self, provider):
         with self.assertRaises(MediaError) as caught:
-            media_options("https://youtu.be/abc")
+            media_options("https://youtu.be/abc", "mweb")
         self.assertIn("could not start", str(caught.exception))
         self.assertIn("npm build failed", caught.exception.details)
+
+    @patch("downloader.ensure_provider")
+    def test_default_youtube_path_does_not_require_token_service(self, provider):
+        self.assertNotIn("extractor_args", media_options("https://youtu.be/abc"))
+        provider.assert_not_called()
 
     def test_failed_build_does_not_mark_cache_ready(self):
         with tempfile.TemporaryDirectory() as directory:
