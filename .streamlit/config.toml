@@ -9,6 +9,9 @@ font = "sans serif"
 [server]
 headless = true
 maxUploadSize = 1
+# Deploy updates with a full reboot; avoid module-reload races during imports.
+fileWatcherType = "none"
+runOnSave = false
 
 [browser]
 gatherUsageStats = false
