@@ -9,6 +9,7 @@ from importlib.metadata import version, PackageNotFoundError
 
 import imageio_ffmpeg
 import yt_dlp
+from youtube_provider import ensure_provider, ProviderError
 
 PLATFORMS = {"YouTube": ("youtube.com", "youtu.be"), "Instagram": ("instagram.com",), "TikTok": ("tiktok.com",)}
 MAX_BYTES = 250 * 1024 * 1024
@@ -23,13 +24,16 @@ class MediaError(Exception):
 def download_diagnostics(errors, settings):
     """Keep useful provider failures without exposing signed URLs or local paths."""
     packages = []
-    for name in ("yt-dlp", "yt-dlp-ejs", "nodejs-wheel"):
+    for name in ("yt-dlp", "yt-dlp-ejs", "nodejs-wheel", "bgutil-ytdlp-pot-provider"):
         try:
             packages.append(f"{name}: {version(name)}")
         except PackageNotFoundError:
             packages.append(f"{name}: not installed")
     node = settings.get("js_runtimes", {}).get("node", {}).get("path")
     packages.append(f"Node executable found: {bool(node and Path(node).is_file())}")
+    youtube = settings.get("extractor_args", {}).get("youtube", {})
+    packages.append(f"YouTube client: {','.join(youtube.get('player_client', ['default']))}")
+    packages.append(f"Local token provider configured: {bool(settings.get('extractor_args', {}).get('youtubepot-bgutilhttp'))}")
     for entry in errors:
         entry = re.sub(r"\x1b\[[0-9;]*m", "", str(entry))
         entry = re.sub(r"https?://\S+", "[URL omitted]", entry)
@@ -86,6 +90,22 @@ def options():
     }
 
 
+def media_options(url):
+    settings = options()
+    host = (urlparse(url).hostname or "").lower()
+    if any(host == domain or host.endswith("." + domain) for domain in PLATFORMS["YouTube"]):
+        try:
+            version("bgutil-ytdlp-pot-provider")
+            endpoint = ensure_provider(settings["js_runtimes"]["node"].get("path"))
+        except (ProviderError, PackageNotFoundError, OSError) as error:
+            raise MediaError("YouTube's download service could not start. Please check the app's setup.", str(error)) from error
+        settings["extractor_args"] = {
+            "youtube": {"player_client": ["mweb"], "fetch_pot": ["auto"]},
+            "youtubepot-bgutilhttp": {"base_url": [endpoint]},
+        }
+    return settings
+
+
 def friendly_error(error):
     message = str(error).lower()
     if any(word in message for word in ("winerror 10013", "permission denied", "operation not permitted")):
@@ -116,7 +136,7 @@ def friendly_error(error):
 
 
 def inspect_video(url):
-    settings = options()
+    settings = media_options(url)
     logger = DownloadLogger()
     settings.update(logger=logger, no_warnings=False)
     try:
@@ -139,7 +159,7 @@ def video_qualities(info):
 
 
 def download_media(url, kind, quality, directory, progress=None):
-    opts = options()
+    opts = media_options(url)
     logger = DownloadLogger()
     opts.update(logger=logger, no_warnings=False)
     failures = []

@@ -16,7 +16,7 @@ python -m venv .venv
 
 On macOS/Linux, replace `.venv\Scripts\python.exe` with `.venv/bin/python`.
 
-FFmpeg is supplied by imageio-ffmpeg, with an installed system FFmpeg taking precedence. For full YouTube support, install a supported JavaScript runtime such as Deno (https://deno.com/) or Node.js 22+; both are enabled by the app. yt-dlp's default dependencies include its challenge scripts. See https://github.com/yt-dlp/yt-dlp for current platform requirements.
+FFmpeg is supplied by imageio-ffmpeg, with an installed system FFmpeg taking precedence. Node.js 24 is supplied by `nodejs-wheel`, and yt-dlp's default dependencies include its challenge scripts. YouTube also uses the bundled PO-token service described below. See https://github.com/yt-dlp/yt-dlp for current platform requirements.
 
 ## Flow
 
@@ -38,17 +38,29 @@ This is a local application. Before exposing it publicly, add service-level rate
 
 Production uses `server.fileWatcherType = "none"` to avoid Streamlit's module-reloading race during a GitHub update (`KeyError: 'download_details'` inside Python's import machinery). After deploying code changes, use **Manage app → Reboot app** to start a clean process. This deliberately disables local file hot reload too; restart the local server after editing, or override with `--server.fileWatcherType auto` for development. `download_details.py` must remain in the repository root; it is already tracked.
 
-If all YouTube formats fail from Community Cloud while the same URL downloads locally, changing MP3 bitrates or trying the same formats repeatedly is not a reliable fix. The media delivery requests are being refused before FFmpeg conversion. YouTube may enforce IP/client restrictions or require Proof of Origin tokens for the selected client (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide). Node/EJS solves JavaScript challenges; it is not a PO-token provider. A production fix requires testing an appropriate token-provider setup or a different server/network against the failing cloud request. Neither is configured automatically here, and moving to an arbitrary VPS does not guarantee success.
+If all YouTube formats fail from Community Cloud while the same URL downloads locally, changing MP3 bitrates is not a reliable fix. Media requests are being refused before FFmpeg conversion. Node/EJS solves JavaScript challenges; it does not supply playback tokens. GetVideo now uses yt-dlp's recommended `mweb` client with automatic GVS Proof of Origin tokens through `bgutil-ytdlp-pot-provider` for both MP3 and MP4 (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+
+### Deploying the YouTube token service
+
+Upload the complete updated repository, including **`youtube_provider.py`, `vendor/bgutil/` (all files), `packages.txt`, `requirements.txt`, and `downloader.py`**. A Python-only upload is insufficient. Then use **Manage app → Reboot app** so Community Cloud installs the new Python and system dependencies and starts a clean process. No cookies, API key, separate Node server, or public port are required.
+
+The first YouTube request installs the locked npm dependencies and builds the bundled upstream v2.0.0 server in a temporary runtime cache. This can take several minutes on a fresh host. Subsequent requests reuse the build and service. Builds use a cross-process file lock, starts use a thread lock, and the service binds only to loopback on a dynamically chosen port. Node is located from the Python wheel; npm does not need to be on PATH. `packages.txt` supplies Linux libraries if canvas needs a native build. The service stops with the app process and is restarted if it exits. Instagram/TikTok do not start or use this service.
+
+Build failures appear in Streamlit's server logs; service logs are in the temporary `getvideo-pot-*/service-*.log` directory. Setup errors are reported separately from missing videos. The bundled server's source, lockfile, attribution, and GPL-3.0 license are included in `vendor/bgutil/`.
+
+Playback tokens address a missing part of the request flow, but do not guarantee access from a blocked cloud IP. If token-bearing media requests still get HTTP 403 on the deployed server, that host/network needs investigation; changing conversion libraries cannot repair a refusal before media bytes arrive. Local success does not verify Community Cloud.
 
 MP3 downloads now check source stream availability before selection. Error classification distinguishes missing formats from unavailable videos, and a failed last-resort format no longer masks an earlier HTTP 403. On failure, expand **Download error details** in the app to see installed dependency versions, whether Node was found, extractor warnings, and the errors from each attempt. Signed URLs are omitted. Share this diagnostic text or the Python logs from **Manage app → Logs**; browser-console iframe warnings and `/api/v2/user/details` requests do not show the server-side yt-dlp failure.
 
 The deployment dependencies now include Node.js 24 via `nodejs-wheel`, and the downloader explicitly locates the bundled executable. This supplies YouTube's JavaScript runtime even when the host has no suitable Node.js on PATH. MP3 preparation retries a refused/expired media URL with freshly extracted alternate audio formats and then an audio-bearing video format, up to three attempts. Authentication errors and rate limits are not repeatedly retried. Missing media fragments fail rather than producing incomplete files.
 
-Upload `app.py`, `downloader.py`, `style.css`, and `requirements.txt` together and rebuild the deployed app's dependencies. A successful local test does not establish that the production host's IP is accepted by a platform. If a 403 persists after this deployment, inspect the hosting logs to distinguish a platform restriction from a runtime/extraction problem; this patch cannot guarantee access from every cloud server. The screenshot's YouTube example `3NAWiR0gZ5s` worked locally even before these changes.
+Follow the complete token-service deployment checklist above, rather than uploading only `downloader.py`. The screenshot's YouTube example `3NAWiR0gZ5s` worked locally before these changes too, so a production verification remains necessary.
 
 `WinError 10013` means outbound access is blocked by the process environment or firewall, not that the video link is invalid. In particular, launching Streamlit inside a restricted agent environment can block all three platforms and both output types. Use `start.bat` from a normal Windows session, or launch it through an approved network-enabled execution. Do not disable your firewall. Platform login requirements and rate limits are separate issues; the app now reports those separately. The `curl-cffi` extra supplies browser-compatible networking when an extractor needs it.
 
 ## Tests
+
+Token-provider verification on 2026-09-25: `3NAWiR0gZ5s` exposed 35 token-bearing media formats through `mweb`; MP3 downloaded and decoded (3,277,868 bytes). The token-enabled client also passed MP4 download/decoding (5,553,667 bytes). The supplied Instagram and TikTok links passed MP3 download/decoding again. All 26 automated tests passed. These runs were local, not on Streamlit Community Cloud.
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v

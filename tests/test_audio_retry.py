@@ -8,6 +8,11 @@ from yt_dlp.utils import DownloadError
 
 
 class AudioRetryTests(unittest.TestCase):
+    def setUp(self):
+        provider = patch("downloader.ensure_provider", return_value="http://127.0.0.1:4416")
+        provider.start()
+        self.addCleanup(provider.stop)
+
     def test_missing_format_is_not_missing_video(self):
         message = friendly_error("Requested format is not available. Use --list-formats")
         self.assertIn("usable audio/video format", message)

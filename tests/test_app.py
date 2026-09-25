@@ -9,6 +9,11 @@ from download_details import download_filename, format_size
 
 
 class DownloaderTests(unittest.TestCase):
+    def setUp(self):
+        provider = patch("downloader.ensure_provider", return_value="http://127.0.0.1:4416")
+        provider.start()
+        self.addCleanup(provider.stop)
+
     def test_network_errors_are_actionable_for_every_platform(self):
         for platform in ("YouTube", "Instagram", "TikTok"):
             message = friendly_error(f"ERROR [{platform}] Failed to connect: [WinError 10013] access permissions")
