@@ -36,6 +36,10 @@ This is a local application. Before exposing it publicly, add service-level rate
 
 ### Connection troubleshooting
 
+The deployment dependencies now include Node.js 24 via `nodejs-wheel`, and the downloader explicitly locates the bundled executable. This supplies YouTube's JavaScript runtime even when the host has no suitable Node.js on PATH. MP3 preparation retries a refused/expired media URL with freshly extracted alternate audio formats and then an audio-bearing video format, up to three attempts. Authentication errors and rate limits are not repeatedly retried. Missing media fragments fail rather than producing incomplete files.
+
+Upload `app.py`, `downloader.py`, `style.css`, and `requirements.txt` together and rebuild the deployed app's dependencies. A successful local test does not establish that the production host's IP is accepted by a platform. If a 403 persists after this deployment, inspect the hosting logs to distinguish a platform restriction from a runtime/extraction problem; this patch cannot guarantee access from every cloud server. The screenshot's YouTube example `3NAWiR0gZ5s` worked locally even before these changes.
+
 `WinError 10013` means outbound access is blocked by the process environment or firewall, not that the video link is invalid. In particular, launching Streamlit inside a restricted agent environment can block all three platforms and both output types. Use `start.bat` from a normal Windows session, or launch it through an approved network-enabled execution. Do not disable your firewall. Platform login requirements and rate limits are separate issues; the app now reports those separately. The `curl-cffi` extra supplies browser-compatible networking when an extractor needs it.
 
 ## Tests

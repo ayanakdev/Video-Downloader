@@ -3,6 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import os
 import shutil
+import importlib.util
 
 import imageio_ffmpeg
 import yt_dlp
@@ -29,13 +30,22 @@ def validate_url(value, platform):
 
 
 def options():
+    node_path = shutil.which("node")
+    spec = importlib.util.find_spec("nodejs_wheel")
+    if spec and spec.origin:
+        root = Path(spec.origin).parent
+        for candidate in (root / "bin" / "node", root / "node.exe", root / "bin" / "node.exe"):
+            if candidate.is_file():
+                node_path = str(candidate)
+                break
     return {
         "quiet": True, "no_warnings": True, "noplaylist": True,
         "socket_timeout": 25, "retries": 2, "extractor_retries": 2,
         "max_filesize": MAX_BYTES, "cachedir": False,
         "ffmpeg_location": shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe(),
         "restrictfilenames": True,
-        "js_runtimes": {"deno": {}, "node": {}},
+        "js_runtimes": {"deno": {}, "node": {"path": node_path} if node_path else {}},
+        "skip_unavailable_fragments": False,
     }
 
 
@@ -50,7 +60,9 @@ def friendly_error(error):
     if "429" in message or "too many requests" in message or "rate-limit" in message:
         return "The platform is temporarily limiting requests from this connection. Wait a few minutes before trying again."
     if "403" in message or "forbidden" in message:
-        return "The platform refused this download from the current connection. Refresh the video and retry; it may require a signed-in session."
+        return ("The platform refused access from this server. Alternative audio sources may also be blocked. "
+                "If the same link works locally, the hosting server's connection may be restricted; "
+                "retry later or contact the app owner. This does not necessarily mean the video is private.")
     if "ffmpeg" in message or "ffprobe" in message:
         return "Audio/video conversion failed. Check the FFmpeg installation and try another quality."
     if any(word in message for word in ("private", "login", "log in", "sign in", "cookies", "age-restricted", "confirm you're")):
@@ -103,9 +115,27 @@ def download_media(url, kind, quality, directory, progress=None):
         opts.update(format=f"bestvideo[ext=mp4][height={int(quality)}]+bestaudio[ext=m4a]/best[ext=mp4][height={int(quality)}]/bestvideo[height={int(quality)}]+bestaudio/best[height={int(quality)}]",
                     merge_output_format="mp4", postprocessors=[{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}])
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.extract_info(url, download=True)
-        files = list(Path(directory).glob(f"*.{kind.lower()}"))
+        selectors = [opts["format"]]
+        if kind == "MP3":
+            # A slash fallback only handles absent formats, not HTTP failures.
+            # Re-extract fresh URLs and try other audio sources on a refusal.
+            selectors += ["bestaudio[ext=m4a]/bestaudio[ext=webm]", "best[vcodec!=none][acodec!=none]"]
+        for attempt, selector in enumerate(selectors):
+            target = Path(directory) if attempt == 0 else Path(directory) / f"attempt-{attempt + 1}"
+            target.mkdir(parents=True, exist_ok=True)
+            attempt_opts = {**opts, "format": selector, "outtmpl": str(target / "%(title).100B-%(id)s.%(ext)s")}
+            try:
+                with yt_dlp.YoutubeDL(attempt_opts) as ydl:
+                    ydl.extract_info(url, download=True)
+                break
+            except yt_dlp.utils.DownloadError as error:
+                message = str(error).lower()
+                retryable = any(token in message for token in ("403", "forbidden", "410", "requested format is not available", "no suitable formats"))
+                if not retryable or attempt == len(selectors) - 1:
+                    raise
+                if progress:
+                    progress(0.0, "retrying")
+        files = list(target.glob(f"*.{kind.lower()}"))
         if not files:
             raise MediaError("The file could not be prepared, or exceeds 250 MB. Try a lower quality.")
         result = max(files, key=os.path.getmtime)
