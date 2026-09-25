@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 
 from downloader import download_media, MediaError, friendly_error, download_diagnostics
 from yt_dlp.utils import DownloadError
+from youtube_provider import ProviderError
 
 
 class AudioRetryTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class AudioRetryTests(unittest.TestCase):
         self.assertIn("refused access", str(caught.exception))
         self.assertIn("Attempt 1", caught.exception.details)
         self.assertIn("Attempt 3", caught.exception.details)
-        self.assertEqual(factory.call_args.args[0]["check_formats"], "selected")
+        self.assertEqual(factory.call_args.args[0]["format"], "bestaudio[protocol=sabr]")
 
     @patch("downloader.yt_dlp.YoutubeDL")
     def test_refused_audio_reextracts_and_uses_isolated_fallback(self, factory):
@@ -75,7 +76,8 @@ class AudioRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(download_media("https://youtu.be/example", "MP4", 1080, directory).read_bytes(), b"video")
         self.assertEqual(len(attempts), 3)
-        self.assertEqual(attempts[2]["extractor_args"]["youtube"]["player_client"], ["web_safari"])
+        self.assertEqual(attempts[2]["extractor_args"]["youtube"]["player_client"], ["web"])
+        self.assertIn("protocol=sabr", attempts[2]["format"])
         self.assertTrue(all("height=1080" in opts["format"] for opts in attempts))
 
     @patch("downloader.yt_dlp.YoutubeDL")
@@ -84,6 +86,15 @@ class AudioRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(MediaError):
             download_media("https://youtu.be/example", "MP3", 192, directory)
         self.assertEqual(factory.call_count, 1)
+
+    @patch("downloader.ensure_provider", side_effect=ProviderError("setup failed"))
+    @patch("downloader.yt_dlp.YoutubeDL")
+    def test_all_provider_failures_preserve_original_403(self, factory, provider):
+        factory.return_value.__enter__.return_value.extract_info.side_effect = DownloadError("HTTP Error 403")
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(MediaError) as caught:
+            download_media("https://youtu.be/example", "MP4", 1080, directory)
+        self.assertIn("refused access", str(caught.exception))
+        self.assertIn("setup failed", caught.exception.details)
 
     @patch("downloader.yt_dlp.YoutubeDL")
     def test_retries_are_bounded_for_every_platform(self, factory):

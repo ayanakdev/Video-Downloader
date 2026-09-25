@@ -1,5 +1,6 @@
 streamlit>=1.50,<2
-yt-dlp[default,curl-cffi]>=2026.8.19
+# Pinned maintainer SABR implementation: upstream PR #13515 (not yet in stable).
+yt-dlp[default,curl-cffi] @ git+https://github.com/coletdjnz/yt-dlp-dev.git@6ef0ae00f0a4e9dd042193b3f5a2bb28b5fc0ca6
 imageio-ffmpeg>=0.6,<1
 gallery-dl>=1.32.13,<2
 nodejs-wheel>=24,<25

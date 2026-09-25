@@ -23,7 +23,7 @@ class MediaError(Exception):
 
 def download_diagnostics(errors, settings):
     """Keep useful provider failures without exposing signed URLs or local paths."""
-    packages = []
+    packages = ["Downloader revision: 2026-09-25-sabr-fallback"]
     for name in ("yt-dlp", "yt-dlp-ejs", "nodejs-wheel", "bgutil-ytdlp-pot-provider"):
         try:
             packages.append(f"{name}: {version(name)}")
@@ -99,16 +99,18 @@ def media_options(url, client="default"):
     settings = options()
     if is_youtube(url) and client != "default":
         settings["extractor_args"] = {"youtube": {"player_client": [client], "fetch_pot": ["auto"]}}
-    if is_youtube(url) and client == "mweb":
+    if is_youtube(url) and client in ("mweb", "web"):
         try:
             version("bgutil-ytdlp-pot-provider")
             endpoint = ensure_provider(settings["js_runtimes"]["node"].get("path"))
         except (ProviderError, PackageNotFoundError, OSError) as error:
             raise MediaError("YouTube's download service could not start. Please check the app's setup.", str(error)) from error
         settings["extractor_args"] = {
-            "youtube": {"player_client": ["mweb"], "fetch_pot": ["auto"]},
+            "youtube": {"player_client": [client], "fetch_pot": ["auto"]},
             "youtubepot-bgutilhttp": {"base_url": [endpoint]},
         }
+        if client == "web":
+            settings["extractor_args"]["youtube"].update(webpage_client=["web"], formats=["duplicate"])
     return settings
 
 
@@ -151,16 +153,17 @@ def inspect_video(url):
     logger = DownloadLogger()
     settings.update(logger=logger, no_warnings=False)
     try:
-        try:
-            with yt_dlp.YoutubeDL(settings) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except yt_dlp.utils.DownloadError as error:
-            if not is_youtube(url) or not retryable_error(error):
-                raise
-            settings = media_options(url, "mweb")
+        clients = ("default", "mweb", "web") if is_youtube(url) else ("default",)
+        for index, client in enumerate(clients):
+            settings = media_options(url, client)
             settings.update(logger=logger, no_warnings=False)
-            with yt_dlp.YoutubeDL(settings) as ydl:
-                info = ydl.extract_info(url, download=False)
+            try:
+                with yt_dlp.YoutubeDL(settings) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                break
+            except yt_dlp.utils.DownloadError as error:
+                if index == len(clients) - 1 or not retryable_error(error):
+                    raise
         if not info or info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
             raise MediaError("Please use a link to one video. Playlists and multi-item posts are not supported.")
         if info.get("is_live") or info.get("live_status") == "is_live":
@@ -214,7 +217,7 @@ def download_media(url, kind, quality, directory, progress=None):
             target = Path(directory) if attempt == 0 else Path(directory) / f"attempt-{attempt + 1}"
             target.mkdir(parents=True, exist_ok=True)
             attempt_opts = {**opts, "format": selector, "outtmpl": str(target / "%(title).100B-%(id)s.%(ext)s")}
-            client = ("default", "mweb", "web_safari")[attempt] if youtube else "platform default"
+            client = ("default", "mweb", "web")[attempt] if youtube else "platform default"
             if youtube and attempt:
                 try:
                     attempt_opts.update(media_options(url, client))
@@ -224,6 +227,12 @@ def download_media(url, kind, quality, directory, progress=None):
                     if progress:
                         progress(0.0, "retrying")
                     continue
+            if youtube and client == "web":
+                # SABR supplies media through a different transport, not signed HTTPS URLs.
+                attempt_opts["format"] = ("bestaudio[protocol=sabr]" if kind == "MP3" else
+                    f"bestvideo[protocol=sabr][ext=mp4][height={int(quality)}]+bestaudio[protocol=sabr][ext=m4a]/bestvideo[protocol=sabr][height={int(quality)}]+bestaudio[protocol=sabr]")
+                attempt_opts.pop("check_formats", None)
+                selector = attempt_opts["format"]
             try:
                 with yt_dlp.YoutubeDL(attempt_opts) as ydl:
                     ydl.extract_info(url, download=True)
@@ -234,6 +243,8 @@ def download_media(url, kind, quality, directory, progress=None):
                     raise
                 if progress:
                     progress(0.0, "retrying")
+        else:
+            raise yt_dlp.utils.DownloadError("All download sources failed. " + "\n".join(failures))
         files = list(target.glob(f"*.{kind.lower()}"))
         if not files:
             raise MediaError("The file could not be prepared, or exceeds 250 MB. Try a lower quality.")

@@ -122,7 +122,7 @@ if st.session_state.media:
                     progress = st.progress(0, text="Starting your download…")
                     try:
                         def update(value, status):
-                            message = "Trying another audio source…" if status == "retrying" else "Finishing your file…" if status == "finished" else "Downloading your favorite…"
+                            message = "Trying another download source…" if status == "retrying" else "Finishing your file…" if status == "finished" else "Downloading your favorite…"
                             progress.progress(value, text=message)
                         with st.spinner("Preparing your file. Almost yours…", show_time=True):
                             with tempfile.TemporaryDirectory(prefix="getvideo-") as directory:
