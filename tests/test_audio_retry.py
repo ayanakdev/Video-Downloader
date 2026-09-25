@@ -3,11 +3,36 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from downloader import download_media, MediaError
+from downloader import download_media, MediaError, friendly_error, download_diagnostics
 from yt_dlp.utils import DownloadError
 
 
 class AudioRetryTests(unittest.TestCase):
+    def test_missing_format_is_not_missing_video(self):
+        message = friendly_error("Requested format is not available. Use --list-formats")
+        self.assertIn("usable audio/video format", message)
+        self.assertNotIn("This video is unavailable", message)
+        self.assertNotIn("This video is unavailable", friendly_error("HTTP Error 404: Not Found"))
+
+    def test_diagnostics_remove_signed_urls_and_tokens(self):
+        result = download_diagnostics(["HTTP 403 https://cdn.test/a?signature=secret token=secret"], {})
+        self.assertIn("403", result)
+        self.assertNotIn("secret", result)
+
+    @patch("downloader.yt_dlp.YoutubeDL")
+    def test_last_format_failure_preserves_original_refusal(self, factory):
+        factory.return_value.__enter__.return_value.extract_info.side_effect = [
+            DownloadError("HTTP Error 403: Forbidden"),
+            DownloadError("HTTP Error 403: Forbidden"),
+            DownloadError("Requested format is not available"),
+        ]
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(MediaError) as caught:
+            download_media("https://youtu.be/example", "MP3", 128, directory)
+        self.assertIn("refused access", str(caught.exception))
+        self.assertIn("Attempt 1", caught.exception.details)
+        self.assertIn("Attempt 3", caught.exception.details)
+        self.assertEqual(factory.call_args.args[0]["check_formats"], "selected")
+
     @patch("downloader.yt_dlp.YoutubeDL")
     def test_refused_audio_reextracts_and_uses_isolated_fallback(self, factory):
         attempts = []

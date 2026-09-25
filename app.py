@@ -24,6 +24,7 @@ def clear_result():
     st.session_state.media = None
     st.session_state.prepared = None
     st.session_state.error = None
+    st.session_state.pop("error_details", None)
     st.session_state.pop("download_name", None)
     st.session_state.pop("filename_input", None)
     for key in ("gallery_files", "gallery_name", "gallery_zip"):
@@ -70,6 +71,7 @@ with st.container(key="download_card", border=True):
                 st.session_state.media = {"info": info, "url": checked_url}
         except (MediaError, ValueError) as error:
             st.session_state.error = str(error)
+            st.session_state.error_details = getattr(error, "details", None)
         except Exception:
             st.session_state.error = "Something interrupted processing. Please try again."
         finally:
@@ -77,6 +79,9 @@ with st.container(key="download_card", border=True):
     st.html('<div class="under-button">Your favorites. Simple downloads. <span>Just the way you like it.</span></div>')
     if st.session_state.error:
         st.error(st.session_state.error)
+        if st.session_state.get("error_details"):
+            with st.expander("Download error details"):
+                st.code(st.session_state.error_details, language="text")
 
 if st.session_state.get("gallery_files"):
     render_gallery(st.session_state.gallery_files)
@@ -127,6 +132,9 @@ if st.session_state.media:
                     except MediaError as error:
                         progress.empty()
                         st.error(str(error))
+                        if error.details:
+                            with st.expander("Download error details"):
+                                st.code(error.details, language="text")
                     except Exception:
                         progress.empty()
                         st.error("We couldn't prepare this file. Please try another video or quality.")

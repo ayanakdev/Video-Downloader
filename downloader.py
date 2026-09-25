@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 import os
 import shutil
 import importlib.util
+import re
+from importlib.metadata import version, PackageNotFoundError
 
 import imageio_ffmpeg
 import yt_dlp
@@ -13,7 +15,42 @@ MAX_BYTES = 250 * 1024 * 1024
 
 
 class MediaError(Exception):
-    pass
+    def __init__(self, message, details=None):
+        super().__init__(message)
+        self.details = details
+
+
+def download_diagnostics(errors, settings):
+    """Keep useful provider failures without exposing signed URLs or local paths."""
+    packages = []
+    for name in ("yt-dlp", "yt-dlp-ejs", "nodejs-wheel"):
+        try:
+            packages.append(f"{name}: {version(name)}")
+        except PackageNotFoundError:
+            packages.append(f"{name}: not installed")
+    node = settings.get("js_runtimes", {}).get("node", {}).get("path")
+    packages.append(f"Node executable found: {bool(node and Path(node).is_file())}")
+    for entry in errors:
+        entry = re.sub(r"\x1b\[[0-9;]*m", "", str(entry))
+        entry = re.sub(r"https?://\S+", "[URL omitted]", entry)
+        entry = re.sub(r"(?i)(cookie|authorization|token)\s*[:=]\s*\S+", r"\1=[omitted]", entry)
+        packages.append(entry[:1800])
+    return "\n".join(packages)
+
+
+class DownloadLogger:
+    def __init__(self):
+        self.messages = []
+
+    def debug(self, message):
+        pass
+
+    def warning(self, message):
+        self.messages.append(str(message))
+        self.messages = self.messages[-12:]
+
+    def error(self, message):
+        self.warning(message)
 
 
 def validate_url(value, platform):
@@ -67,7 +104,11 @@ def friendly_error(error):
         return "Audio/video conversion failed. Check the FFmpeg installation and try another quality."
     if any(word in message for word in ("private", "login", "log in", "sign in", "cookies", "age-restricted", "confirm you're")):
         return "This video needs a login or is restricted by the platform. Try a publicly accessible video."
-    if any(word in message for word in ("unavailable", "not available", "removed", "404")):
+    if any(word in message for word in ("requested format", "no suitable formats", "no video formats", "only images are available")):
+        return "The platform did not provide a usable audio/video format to this server. The video itself may still be available."
+    if "404" in message or "410" in message:
+        return "A media request failed or its download link expired. This does not establish that the video was removed. Try fetching the video again."
+    if any(word in message for word in ("video unavailable", "video is unavailable", "video has been removed", "video not available")):
         return "This video is unavailable. Check the link or try another video."
     if "format" in message:
         return "That quality is no longer available. Get the video again to refresh its available formats."
@@ -75,8 +116,11 @@ def friendly_error(error):
 
 
 def inspect_video(url):
+    settings = options()
+    logger = DownloadLogger()
+    settings.update(logger=logger, no_warnings=False)
     try:
-        with yt_dlp.YoutubeDL(options()) as ydl:
+        with yt_dlp.YoutubeDL(settings) as ydl:
             info = ydl.extract_info(url, download=False)
         if not info or info.get("_type") in ("playlist", "multi_video") or info.get("entries") is not None:
             raise MediaError("Please use a link to one video. Playlists and multi-item posts are not supported.")
@@ -84,7 +128,7 @@ def inspect_video(url):
             raise MediaError("This video is live. Try again after the broadcast has finished.")
         return info
     except yt_dlp.utils.DownloadError as error:
-        raise MediaError(friendly_error(error)) from error
+        raise MediaError(friendly_error(error), download_diagnostics([*logger.messages, str(error)], settings)) from error
 
 
 def video_qualities(info):
@@ -96,6 +140,9 @@ def video_qualities(info):
 
 def download_media(url, kind, quality, directory, progress=None):
     opts = options()
+    logger = DownloadLogger()
+    opts.update(logger=logger, no_warnings=False)
+    failures = []
     opts["outtmpl"] = str(Path(directory) / "%(title).100B-%(id)s.%(ext)s")
 
     def hook(data):
@@ -108,7 +155,7 @@ def download_media(url, kind, quality, directory, progress=None):
 
     opts["progress_hooks"] = [hook]
     if kind == "MP3":
-        opts.update(format="bestaudio/best", postprocessors=[{
+        opts.update(format="bestaudio/best", check_formats="selected", postprocessors=[{
             "key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": str(quality),
         }])
     else:
@@ -129,6 +176,7 @@ def download_media(url, kind, quality, directory, progress=None):
                     ydl.extract_info(url, download=True)
                 break
             except yt_dlp.utils.DownloadError as error:
+                failures.append(f"Attempt {attempt + 1} ({selector}): {error}")
                 message = str(error).lower()
                 retryable = any(token in message for token in ("403", "forbidden", "410", "requested format is not available", "no suitable formats"))
                 if not retryable or attempt == len(selectors) - 1:
@@ -143,4 +191,6 @@ def download_media(url, kind, quality, directory, progress=None):
             raise MediaError("This file exceeds 250 MB. Choose a lower quality.")
         return result
     except yt_dlp.utils.DownloadError as error:
-        raise MediaError(friendly_error(error)) from error
+        # An absent last-resort format must not conceal the original 403.
+        cause = next((failure for failure in [*failures, *logger.messages] if "403" in failure or "forbidden" in failure.lower()), str(error))
+        raise MediaError(friendly_error(cause), download_diagnostics([*logger.messages, *failures], opts)) from error

@@ -36,6 +36,8 @@ This is a local application. Before exposing it publicly, add service-level rate
 
 ### Connection troubleshooting
 
+MP3 downloads now check source stream availability before selection. Error classification distinguishes missing formats from unavailable videos, and a failed last-resort format no longer masks an earlier HTTP 403. On failure, expand **Download error details** in the app to see installed dependency versions, whether Node was found, extractor warnings, and the errors from each attempt. Signed URLs are omitted. Share this diagnostic text or the Python logs from **Manage app → Logs**; browser-console iframe warnings and `/api/v2/user/details` requests do not show the server-side yt-dlp failure.
+
 The deployment dependencies now include Node.js 24 via `nodejs-wheel`, and the downloader explicitly locates the bundled executable. This supplies YouTube's JavaScript runtime even when the host has no suitable Node.js on PATH. MP3 preparation retries a refused/expired media URL with freshly extracted alternate audio formats and then an audio-bearing video format, up to three attempts. Authentication errors and rate limits are not repeatedly retried. Missing media fragments fail rather than producing incomplete files.
 
 Upload `app.py`, `downloader.py`, `style.css`, and `requirements.txt` together and rebuild the deployed app's dependencies. A successful local test does not establish that the production host's IP is accepted by a platform. If a 403 persists after this deployment, inspect the hosting logs to distinguish a platform restriction from a runtime/extraction problem; this patch cannot guarantee access from every cloud server. The screenshot's YouTube example `3NAWiR0gZ5s` worked locally even before these changes.
