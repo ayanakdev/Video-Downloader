@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +41,31 @@ class AudioRetryTests(unittest.TestCase):
         # googlevideo edges hand out IPv6 media hosts that then refuse the
         # connection, so cloud downloads must not negotiate IPv6.
         self.assertTrue(options()["force_ipv4"])
+
+    def test_proxy_is_applied_only_when_configured(self):
+        # A residential proxy is the only real fix for a blocked datacentre IP,
+        # and local runs must stay on the direct connection.
+        os.environ.pop("GETVIDEO_PROXY", None)
+        self.assertNotIn("proxy", options())
+        os.environ["GETVIDEO_PROXY"] = "http://user:pass@proxy.test:8080"
+        try:
+            self.assertEqual(options()["proxy"], "http://user:pass@proxy.test:8080")
+        finally:
+            os.environ.pop("GETVIDEO_PROXY", None)
+
+    def test_refusal_names_the_missing_proxy_on_hosted_deployments(self):
+        bot_wall = "ERROR: [youtube] 7Wi38uVsW98: Sign in to confirm you're not a bot."
+        os.environ.pop("GETVIDEO_PROXY", None)
+        try:
+            # Without a proxy the message must say what is actually missing.
+            self.assertIn("GETVIDEO_PROXY", friendly_error("HTTP Error 403: Forbidden"))
+            self.assertIn("GETVIDEO_PROXY", friendly_error(bot_wall))
+            # With a proxy configured, the hint would be misleading.
+            os.environ["GETVIDEO_PROXY"] = "http://proxy.test:8080"
+            self.assertNotIn("GETVIDEO_PROXY", friendly_error("HTTP Error 403: Forbidden"))
+            self.assertNotIn("GETVIDEO_PROXY", friendly_error(bot_wall))
+        finally:
+            os.environ.pop("GETVIDEO_PROXY", None)
 
     def test_bot_wall_is_reported_as_a_host_block_not_a_private_video(self):
         blocked = ("ERROR: [youtube] 7Wi38uVsW98: Sign in to confirm you're not a bot. "

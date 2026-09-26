@@ -41,6 +41,7 @@ def download_diagnostics(errors, settings):
     packages.append(f"YouTube client: {','.join(youtube.get('player_client', ['default'])) or 'default'}")
     packages.append(f"Local token provider configured: {bool(settings.get('extractor_args', {}).get('youtubepot-bgutilhttp'))}")
     packages.append(f"IPv4 forced: {bool(settings.get('force_ipv4'))}")
+    packages.append(f"Outbound proxy configured: {bool(settings.get('proxy'))}")
     for entry in errors:
         entry = re.sub(r"\x1b\[[0-9;]*m", "", str(entry))
         entry = re.sub(r"https?://\S+", "[URL omitted]", entry)
@@ -77,6 +78,17 @@ def validate_url(value, platform):
     return value
 
 
+def proxy_url():
+    """Outbound proxy for hosted deployments, set by the app entry point.
+
+    Cloud and datacentre IP ranges are blocked by video platforms, so routing
+    through a residential proxy is the only reliable way to serve downloads
+    from a hosted app. app.py reads it from Streamlit secrets or the
+    environment; local runs need none because home IPs are not blocked.
+    """
+    return os.environ.get("GETVIDEO_PROXY", "").strip() or None
+
+
 def options():
     node_path = shutil.which("node")
     spec = importlib.util.find_spec("nodejs_wheel")
@@ -90,7 +102,7 @@ def options():
     deno = shutil.which("deno")
     if deno:
         runtimes["deno"] = {"path": deno}
-    return {
+    settings = {
         "quiet": True, "no_warnings": True, "noplaylist": True,
         "socket_timeout": 25, "retries": 2, "extractor_retries": 2,
         "max_filesize": MAX_BYTES, "cachedir": False,
@@ -102,6 +114,10 @@ def options():
         # the IPv6 media hosts they hand out while serving the same URL over IPv4.
         "force_ipv4": True,
     }
+    proxy = proxy_url()
+    if proxy:
+        settings["proxy"] = proxy
+    return settings
 
 
 def is_youtube(url):
@@ -161,9 +177,11 @@ def friendly_error(error):
         return "The platform is temporarily limiting requests from this connection. Wait a few minutes before trying again."
     # YouTube's bot wall is IP-based, so it hits cloud hosts and not home connections.
     if "sign in to confirm" in message or "not a bot" in message or "confirm you" in message:
-        return ("The platform's bot check blocked this hosting server's network address. Cloud and datacentre "
-                "IP ranges are usually blocked, so videos that work on your own computer can be refused here "
-                "even though they are public. Try again later, or use the local app.")
+        hint = ("This app has no outbound proxy configured, which hosted deployments need. "
+                "The app owner must set GETVIDEO_PROXY in Streamlit secrets. " if not proxy_url() else "")
+        return (hint + "The platform's bot check blocked this hosting server's network address. Cloud and "
+                "datacentre IP ranges are usually blocked, so videos that work on your own computer can be "
+                "refused here even though they are public.")
     # Checked before 403 because this notice also names HTTP 403 as the consequence.
     if any(word in message for word in ("po token", "proof-of-origin")) and any(word in message for word in ("required", "not provided", "missing", "skipped")):
         return ("The platform withheld higher-quality formats from this server because it could not verify the "
@@ -174,9 +192,11 @@ def friendly_error(error):
     if "403" in message or "forbidden" in message:
         # A datacentre IP is refused at the media CDN even though the same link
         # resolves fine on a home connection, so do not imply the video is the problem.
-        return ("The hosting server's network was refused by the platform. Video platforms routinely block "
+        hint = ("This app has no outbound proxy configured, which hosted deployments need. "
+                "The app owner must set GETVIDEO_PROXY in Streamlit secrets. " if not proxy_url() else "")
+        return (hint + "The hosting server's network was refused by the platform. Video platforms routinely block "
                 "datacentre IP ranges, so a link that works on your own computer can fail here while the "
-                "video stays public. Try again later, or use the local app.")
+                "video stays public.")
     if "ffmpeg" in message or "ffprobe" in message:
         return "Audio/video conversion failed. Check the FFmpeg installation and try another quality."
     if any(word in message for word in ("private", "login", "log in", "sign in", "cookies", "age-restricted", "confirm you're", "cookies-from-browser")):

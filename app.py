@@ -15,6 +15,18 @@ from download_details import download_filename, format_size
 from gallery_downloads import download_post
 from gallery_ui import render_gallery
 
+# Cloud and datacentre IP ranges are blocked by video platforms. Setting
+# GETVIDEO_PROXY in Streamlit secrets (or the environment) to a residential
+# proxy is what makes hosted downloads work; home IPs need no proxy.
+try:
+    _proxy = st.secrets.get("GETVIDEO_PROXY")
+except Exception:
+    _proxy = None
+_proxy = (_proxy or "").strip() if isinstance(_proxy, str) else ""
+if _proxy:
+    import os
+    os.environ["GETVIDEO_PROXY"] = _proxy
+
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="GetVideo — Keep the good stuff.", page_icon=str(ROOT / "assets/videogetLOGO.png"), layout="centered")
 st.html(f"<style>{(ROOT / 'style.css').read_text(encoding='utf-8')}</style>")

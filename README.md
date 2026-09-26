@@ -38,11 +38,31 @@ This is a local application. Before exposing it publicly, add service-level rate
 
 Production uses `server.fileWatcherType = "none"` to avoid Streamlit's module-reloading race during a GitHub update (`KeyError: 'download_details'` inside Python's import machinery). After deploying code changes, use **Manage app → Reboot app** to start a clean process. This deliberately disables local file hot reload too; restart the local server after editing, or override with `--server.fileWatcherType auto` for development. `download_details.py` must remain in the repository root; it is already tracked.
 
+**Reboot does not always pick up new commits.** A reboot restarts the container from the image built by the last deploy; it does not re-clone the repository. Streamlit Cloud's log panel shows the deploy log, and **its timestamps are UTC while your machine may be several hours ahead** — comparing the two wrongly suggests the app is stale. Confirm a deploy is current by expanding **Download error details** in the app and checking the revision line matches the code you pushed. If it does not, the deploy has not completed.
+
 If all YouTube formats fail from Community Cloud while the same URL downloads locally, changing MP3 bitrates is not a reliable fix. Media requests are being refused before FFmpeg conversion. Node/EJS solves JavaScript challenges; it does not supply playback tokens. GetVideo can fall back to yt-dlp's recommended `mweb` client with automatic GVS Proof of Origin tokens through `bgutil-ytdlp-pot-provider` for both MP3 and MP4 (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
+
+### Hosted deployments need an outbound proxy
+
+**This is the fix for HTTP 403 / "Sign in to confirm you're not a bot" on Streamlit Community Cloud.** Those are IP-based blocks: video platforms refuse datacentre IP ranges at the media CDN, so the same public link downloads on a home connection and fails on the cloud host. No client, token, or format change can repair a refusal that happens before any media bytes arrive, and metadata can still succeed while every media request is blocked.
+
+Set a residential proxy in `.streamlit/secrets.toml` (create the file; it is gitignored):
+
+```toml
+GETVIDEO_PROXY = "http://user:pass@host:port"
+```
+
+`GETVIDEO_PROXY` is also read from the environment, so it can be set as a Streamlit Cloud secret instead. The value is passed to yt-dlp as its `proxy` option, so it must be a URL yt-dlp accepts (`http://`, `https://`, `socks5://`). Leave it unset for local runs: home IPs are not blocked, and a proxy only adds latency. When no proxy is configured, the 403 and bot-wall errors say so explicitly, and **Download error details** reports `Outbound proxy configured: False`.
+
+Cheap datacentre proxies score the same as the host IP and rarely help; use a residential or ISP exit.
+
+### Client ladder
+
+YouTube requests walk a ladder of clients, best first, stopping at the first success: `default`, `visionos`, `web_embedded`, `android_vr` (these need no Proof-of-Origin token), then `mweb` and `web` with the bundled token service. MP4 sorts to the requested resolution with `format_sort` instead of forcing one itag, because a forced itag skips the token check and returns 403 on public videos. Cloud downloads force IPv4, since googlevideo hands out IPv6 media hosts that then refuse the connection. A token service that fails to start no longer removes its rung: the client is still tried untokenised and the reason is recorded in the error details.
 
 ### Deploying the YouTube token service
 
-**SABR update (2026-09-25), superseding the older client correction below:** after a full reboot, production rejected the default client's media with HTTP 403 and returned SABR-only/missing-URL responses for `mweb`. The final fallback now uses the `web` client and explicitly selects `protocol=sabr`, with tokens. `requirements.txt` pins maintainer coletdjnz's upstream PR #13515 implementation at commit `6ef0ae00f0a4e9dd042193b3f5a2bb28b5fc0ca6`. This is experimental, unmerged upstream code, not the stable PyPI release. Keep the exact commit pinned until another version is tested. Deploy `requirements.txt` along with `downloader.py` and rebuild/reboot; copying Python code alone cannot add SABR support. The diagnostics revision is `2026-09-25-sabr-fallback`. This adds transport support and cannot guarantee access from every server/network.
+**SABR update (2026-09-25), superseding the older client correction below:** after a full reboot, production rejected the default client's media with HTTP 403 and returned SABR-only/missing-URL responses for `mweb`. The final fallback now uses the `web` client and explicitly selects `protocol=sabr`, with tokens. `requirements.txt` pins maintainer coletdjnz's upstream PR #13515 implementation at commit `6ef0ae00f0a4e9dd042193b3f5a2bb28b5fc0ca6`. This is experimental, unmerged upstream code, not the stable PyPI release. Keep the exact commit pinned until another version is tested. Deploy `requirements.txt` along with `downloader.py` and rebuild/reboot; copying Python code alone cannot add SABR support. The diagnostics revision is now `2026-09-26-client-ladder`. This adds transport support and cannot guarantee access from every server/network.
 
 Production checks after the client-fallback reboot: Instagram MP4 (2.71 MB), Instagram MP3 (538.3 KB), TikTok MP4 (1.17 MB), TikTok MP3 (291.5 KB), and the Instagram carousel (six JPGs; 2.15 MB ZIP) all reached the ready/download state for the supplied examples. YouTube MP4 and MP3 failed on that deployment. TikTok photo-post production verification still needs a photo link. These sample checks do not cover every URL, quality, or restriction.
 
