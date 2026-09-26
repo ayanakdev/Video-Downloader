@@ -1,6 +1,12 @@
 from pathlib import Path
 import base64
+import sys
 import tempfile
+
+ROOT = Path(__file__).resolve().parent
+sabr_source = ROOT / ".sabr-source"
+if sabr_source.is_dir() and str(sabr_source) not in sys.path:
+    sys.path.insert(0, str(sabr_source))
 
 import streamlit as st
 
@@ -72,8 +78,9 @@ with st.container(key="download_card", border=True):
         except (MediaError, ValueError) as error:
             st.session_state.error = str(error)
             st.session_state.error_details = getattr(error, "details", None)
-        except Exception:
+        except Exception as error:
             st.session_state.error = "Something interrupted processing. Please try again."
+            st.session_state.error_details = str(error)
         finally:
             animation.empty()
     st.html('<div class="under-button">Your favorites. Simple downloads. <span>Just the way you like it.</span></div>')
@@ -135,9 +142,11 @@ if st.session_state.media:
                         if error.details:
                             with st.expander("Download error details"):
                                 st.code(error.details, language="text")
-                    except Exception:
+                    except Exception as error:
                         progress.empty()
                         st.error("We couldn't prepare this file. Please try another video or quality.")
+                        with st.expander("Download error details"):
+                            st.code(str(error), language="text")
                 ready = st.session_state.prepared
                 if ready and ready["signature"] == signature:
                     file_size = format_size(len(ready["data"]))

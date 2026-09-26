@@ -6,7 +6,13 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from pathlib import Path
 from urllib.parse import urlparse
+
+ROOT_DIR = Path(__file__).resolve().parent
+sabr_source = ROOT_DIR / ".sabr-source"
+if sabr_source.is_dir() and str(sabr_source) not in sys.path:
+    sys.path.insert(0, str(sabr_source))
 
 import requests
 import yt_dlp
@@ -14,7 +20,11 @@ from yt_dlp.extractor.instagram import InstagramIE
 
 from downloader import MAX_BYTES, MediaError, friendly_error, validate_url, options, inspect_video, video_qualities, download_media
 
-MIMES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/avif": "avif", "image/gif": "gif", "video/mp4": "mp4"}
+MIMES = {
+    "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp",
+    "image/avif": "avif", "image/gif": "gif", "video/mp4": "mp4", "video/quicktime": "mp4",
+    "video/webm": "webm"
+}
 
 
 class InstagramGalleryIE(InstagramIE):
@@ -106,8 +116,14 @@ def download_post(url, platform, progress=None):
                 headers = {"User-Agent": "Mozilla/5.0", "Referer": url, **item["headers"]}
                 with session.get(item["url"], headers=headers, stream=True, timeout=(15, 30)) as response:
                     response.raise_for_status()
-                    mime = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                    mime = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
                     extension = MIMES.get(mime)
+                    if not extension:
+                        url_path = urlparse(item["url"]).path.lower()
+                        for ext in ("jpg", "jpeg", "png", "webp", "avif", "gif", "mp4", "mov", "webm"):
+                            if url_path.endswith(f".{ext}"):
+                                extension = "jpg" if ext == "jpeg" else ("mp4" if ext == "mov" else ext)
+                                break
                     if not extension:
                         raise MediaError("The platform returned an unsupported file instead of an image or video. Please retry the post.")
                     if total + int(response.headers.get("Content-Length", 0)) > MAX_BYTES:

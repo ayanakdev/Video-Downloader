@@ -2,10 +2,16 @@
 from pathlib import Path
 from urllib.parse import urlparse
 import os
+import sys
 import shutil
 import importlib.util
 import re
 from importlib.metadata import version, PackageNotFoundError
+
+ROOT_DIR = Path(__file__).resolve().parent
+sabr_source = ROOT_DIR / ".sabr-source"
+if sabr_source.is_dir() and str(sabr_source) not in sys.path:
+    sys.path.insert(0, str(sabr_source))
 
 import imageio_ffmpeg
 import yt_dlp
@@ -230,7 +236,7 @@ def download_media(url, kind, quality, directory, progress=None):
             if youtube and client == "web":
                 # SABR supplies media through a different transport, not signed HTTPS URLs.
                 attempt_opts["format"] = ("bestaudio[protocol=sabr]" if kind == "MP3" else
-                    f"bestvideo[protocol=sabr][ext=mp4][height={int(quality)}]+bestaudio[protocol=sabr][ext=m4a]/bestvideo[protocol=sabr][height={int(quality)}]+bestaudio[protocol=sabr]")
+                    f"bestvideo[protocol=sabr][ext=mp4][height={int(quality)}]+bestaudio[protocol=sabr][ext=m4a]/bestvideo[protocol=sabr][height={int(quality)}]+bestaudio[protocol=sabr]/bestvideo[height={int(quality)}]+bestaudio/best[height={int(quality)}]")
                 attempt_opts.pop("check_formats", None)
                 selector = attempt_opts["format"]
             try:
