@@ -40,6 +40,14 @@ def _stop():
 atexit.register(_stop)
 
 
+def _tail(path, limit=600):
+    """Surface why the service died; setup failures are otherwise invisible."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-limit:].strip() or "no output"
+    except OSError:
+        return "log unavailable"
+
+
 def _build(node):
     # Include source and dependency lock in the cache key so upgrades rebuild.
     digest = hashlib.sha256(str(node).encode())
@@ -93,21 +101,23 @@ def ensure_provider(node):
             port = sock.getsockname()[1]
         _endpoint = f"http://127.0.0.1:{port}"
         # Token responses remain internal. Bind only loopback, not the public app port.
-        with (runtime / f"service-{os.getpid()}.log").open("a", encoding="utf-8") as log:
+        log_path = runtime / f"service-{os.getpid()}.log"
+        with log_path.open("a", encoding="utf-8") as log:
             _process = subprocess.Popen(
                 [str(node), str(runtime / "build/main.js"), "--host", "127.0.0.1", "--port", str(port)],
                 cwd=runtime, stdout=log, stderr=log,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        opener = build_opener(ProxyHandler({}))
-        for _ in range(100):
+        # A tight host can OOM-kill the server between requests, so allow a full
+        # bind and first-token window before declaring the provider healthy.
+        for _ in range(300):
             if _process.poll() is not None:
                 break
             try:
-                with opener.open(_endpoint + "/ping", timeout=1) as response:
+                with build_opener(ProxyHandler({})).open(_endpoint + "/ping", timeout=2) as response:
                     if json.load(response).get("version") == "2.0.0":
                         return _endpoint
             except (OSError, ValueError):
                 pass
             time.sleep(0.1)
         _stop()
-        raise ProviderError("YouTube token service did not start. Reboot the app and check its Node dependencies.")
+        raise ProviderError(f"YouTube token service did not start. Server log: {_tail(log_path)}")
