@@ -23,11 +23,11 @@ class ProviderTests(unittest.TestCase):
         provider.assert_not_called()
 
     @patch("downloader.ensure_provider", side_effect=youtube_provider.ProviderError("npm build failed"))
-    def test_setup_failure_is_not_mislabeled_as_unavailable_video(self, provider):
-        with self.assertRaises(MediaError) as caught:
-            media_options("https://youtu.be/abc", "mweb")
-        self.assertIn("could not start", str(caught.exception))
-        self.assertIn("npm build failed", caught.exception.details)
+    def test_setup_failure_does_not_silence_the_client(self, provider):
+        # The client is still worth trying untokenised, so this must not raise.
+        settings = media_options("https://youtu.be/abc", "mweb")
+        self.assertEqual(settings["extractor_args"]["youtube"]["player_client"], ["mweb"])
+        self.assertNotIn("youtubepot-bgutilhttp", settings["extractor_args"])
 
     @patch("downloader.ensure_provider")
     def test_default_youtube_path_does_not_require_token_service(self, provider):

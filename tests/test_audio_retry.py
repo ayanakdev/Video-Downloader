@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from downloader import (YOUTUBE_CLIENTS, TOKEN_FREE_CLIENTS, TOKEN_CLIENTS, download_media,
-                        MediaError, friendly_error, download_diagnostics, options)
+                        media_options, MediaError, friendly_error, download_diagnostics, options)
 from yt_dlp.utils import DownloadError
 from youtube_provider import ProviderError
 
@@ -33,11 +33,22 @@ class AudioRetryTests(unittest.TestCase):
         for client in TOKEN_FREE_CLIENTS:
             self.assertLess(YOUTUBE_CLIENTS.index(client), YOUTUBE_CLIENTS.index(TOKEN_CLIENTS[0]))
         self.assertFalse(set(TOKEN_FREE_CLIENTS) & set(TOKEN_CLIENTS))
+        # tv_downgraded aborts the whole run with "page needs to be reloaded".
+        self.assertNotIn("tv_downgraded", YOUTUBE_CLIENTS)
 
     def test_cloud_media_requests_are_forced_to_ipv4(self):
         # googlevideo edges hand out IPv6 media hosts that then refuse the
         # connection, so cloud downloads must not negotiate IPv6.
         self.assertTrue(options()["force_ipv4"])
+
+    def test_bot_wall_is_reported_as_a_host_block_not_a_private_video(self):
+        blocked = ("ERROR: [youtube] 7Wi38uVsW98: Sign in to confirm you're not a bot. "
+                   "Use --cookies-from-browser or --cookies for the authentication.")
+        message = friendly_error(blocked)
+        self.assertIn("bot check", message)
+        self.assertIn("datacentre", message)
+        self.assertNotIn("needs a login", message)
+        self.assertIn("reload the page", friendly_error("ERROR: The page needs to be reloaded."))
 
     def test_withheld_po_token_not_reported_as_a_refused_server(self):
         blocked = ("https formats require a GVS PO Token which was not provided. They will be "
@@ -85,7 +96,7 @@ class AudioRetryTests(unittest.TestCase):
             self.assertEqual(result.read_bytes(), b"converted")
             self.assertEqual(result.parent.name, "attempt-2")
         self.assertNotIn("extractor_args", attempts[0])
-        self.assertEqual(attempts[1]["extractor_args"]["youtube"]["player_client"], [TOKEN_FREE_CLIENTS[0]])
+        self.assertEqual(attempts[1]["extractor_args"]["youtube"]["player_client"], [TOKEN_FREE_CLIENTS[1]])
         self.assertEqual(attempts[1]["postprocessors"][0]["preferredcodec"], "mp3")
 
     @patch("downloader.yt_dlp.YoutubeDL")
@@ -139,9 +150,18 @@ class AudioRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(MediaError) as caught:
             download_media("https://youtu.be/example", "MP4", 1080, directory)
         # A dead token service must not consume the whole ladder.
-        self.assertEqual(factory.call_count, len(YOUTUBE_CLIENTS) - len(TOKEN_CLIENTS))
+        self.assertEqual(factory.call_count, len(YOUTUBE_CLIENTS))
         self.assertIn("refused", str(caught.exception))
         self.assertIn("setup failed", caught.exception.details)
+
+    @patch("downloader.ensure_provider", side_effect=ProviderError("service down"))
+    def test_token_client_still_attempted_without_a_token(self, provider):
+        # Some itags are served untokenised, so a dead token service must not
+        # remove the client from the ladder entirely.
+        settings = media_options("https://youtu.be/example", TOKEN_CLIENTS[0])
+        self.assertEqual(settings["extractor_args"]["youtube"]["player_client"], [TOKEN_CLIENTS[0]])
+        self.assertNotIn("fetch_pot", settings["extractor_args"]["youtube"])
+        self.assertNotIn("youtubepot-bgutilhttp", settings["extractor_args"])
 
     @patch("downloader.yt_dlp.YoutubeDL")
     def test_retries_are_bounded_for_every_platform(self, factory):

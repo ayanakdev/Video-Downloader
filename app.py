@@ -57,8 +57,12 @@ with st.container(key="download_card", border=True):
         st.radio("Choose a file format", ["MP4", "MP3"], key="kind", horizontal=True,
                  format_func=lambda x: "MP4 · Video" if x == "MP4" else "MP3 · Audio", label_visibility="collapsed", on_change=clear_result)
     st.html('<div class="field-label spaced"><b>03</b> Drop the link</div>')
-    url = st.text_input("Video URL", key="url", placeholder=f"Paste your {st.session_state.platform} {'post' if gallery_mode else 'video'} link here…", label_visibility="collapsed", on_change=clear_result)
-    if st.button("GetVideo  →", type="primary", width="stretch", key="get_video"):
+    # A form makes Enter in the link field submit, so pasting a URL starts the
+    # fetch without a second click. clear_on_submit keeps the link on screen.
+    with st.form("get_video_form", border=False, clear_on_submit=False):
+        url = st.text_input("Video URL", key="url", placeholder=f"Paste your {st.session_state.platform} {'post' if gallery_mode else 'video'} link here…", label_visibility="collapsed")
+        submitted = st.form_submit_button("GetVideo  →", type="primary", width="stretch", key="get_video")
+    if submitted:
         clear_result()
         animation = st.empty()
         try:

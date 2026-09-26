@@ -109,13 +109,15 @@ def is_youtube(url):
     return any(host == domain or host.endswith("." + domain) for domain in PLATFORMS["YouTube"])
 
 
-# YouTube still serves these clients without a Proof-of-Origin token, so they
-# keep working from datacentre IPs where the token-gated clients answer 403.
-TOKEN_FREE_CLIENTS = ("visionos", "web_embedded", "tv_downgraded")
+# Clients YouTube still serves without a Proof-of-Origin token, best first.
+# These keep working from datacentre IPs where token-gated clients get 403.
+TOKEN_FREE_CLIENTS = ("default", "visionos", "web_embedded", "android_vr")
 # The token-gated clients return the highest resolutions, so they stay as a
 # fallback for when the local token service is healthy.
 TOKEN_CLIENTS = ("mweb", "web")
-YOUTUBE_CLIENTS = ("default",) + TOKEN_FREE_CLIENTS + TOKEN_CLIENTS
+YOUTUBE_CLIENTS = TOKEN_FREE_CLIENTS + TOKEN_CLIENTS
+# Token-service problems are recorded here so a later failure can explain itself.
+TOKEN_FAILURES = []
 
 
 def media_options(url, client="default"):
@@ -127,7 +129,10 @@ def media_options(url, client="default"):
             version("bgutil-ytdlp-pot-provider")
             endpoint = ensure_provider(settings["js_runtimes"]["node"].get("path"))
         except (ProviderError, PackageNotFoundError, OSError) as error:
-            raise MediaError("YouTube's download service could not start. Please check the app's setup.", str(error)) from error
+            # Still try the client untokenised: some itags are served without a
+            # token, so a dead token service must not cost us the whole rung.
+            TOKEN_FAILURES.append(f"{client}: token service unavailable ({error})")
+            return settings
         settings["extractor_args"] = {
             "youtube": {"player_client": [client], "fetch_pot": ["auto"]},
             "youtubepot-bgutilhttp": {"base_url": [endpoint]},
@@ -154,10 +159,18 @@ def friendly_error(error):
         return "The app cannot connect to the platform. Check this computer's internet connection and try again."
     if "429" in message or "too many requests" in message or "rate-limit" in message:
         return "The platform is temporarily limiting requests from this connection. Wait a few minutes before trying again."
+    # YouTube's bot wall is IP-based, so it hits cloud hosts and not home connections.
+    if "sign in to confirm" in message or "not a bot" in message or "confirm you" in message:
+        return ("The platform's bot check blocked this hosting server's network address. Cloud and datacentre "
+                "IP ranges are usually blocked, so videos that work on your own computer can be refused here "
+                "even though they are public. Try again later, or use the local app.")
     # Checked before 403 because this notice also names HTTP 403 as the consequence.
     if any(word in message for word in ("po token", "proof-of-origin")) and any(word in message for word in ("required", "not provided", "missing", "skipped")):
         return ("The platform withheld higher-quality formats from this server because it could not verify the "
                 "request. Only limited qualities remain available here.")
+    if "page needs to be reloaded" in message:
+        return ("The platform asked this server to reload the page, which it refuses to do for automated "
+                "requests. The video is not necessarily unavailable.")
     if "403" in message or "forbidden" in message:
         # A datacentre IP is refused at the media CDN even though the same link
         # resolves fine on a home connection, so do not imply the video is the problem.
@@ -166,7 +179,7 @@ def friendly_error(error):
                 "video stays public. Try again later, or use the local app.")
     if "ffmpeg" in message or "ffprobe" in message:
         return "Audio/video conversion failed. Check the FFmpeg installation and try another quality."
-    if any(word in message for word in ("private", "login", "log in", "sign in", "cookies", "age-restricted", "confirm you're")):
+    if any(word in message for word in ("private", "login", "log in", "sign in", "cookies", "age-restricted", "confirm you're", "cookies-from-browser")):
         return "This video needs a login or is restricted by the platform. Try a publicly accessible video."
     if any(word in message for word in ("requested format", "no suitable formats", "no video formats", "no sabr formats", "only images are available")) or "forcing sabr" in message:
         return "The platform did not provide a usable audio/video format to this server. The video itself may still be available."
@@ -255,14 +268,8 @@ def download_media(url, kind, quality, directory, progress=None):
             attempt_opts = {**opts, "outtmpl": str(target / outtmpl)}
             selector = selectors[0] if youtube or attempt >= len(selectors) else selectors[attempt]
             if youtube and client != "default":
-                try:
-                    # Change the request client, not just the format on the same refused client.
-                    attempt_opts.update(media_options(url, client))
-                except MediaError as error:
-                    failures.append(f"Attempt {attempt + 1} ({client}): {error}; {error.details}")
-                    if progress:
-                        progress(0.0, "retrying")
-                    continue
+                # Change the request client, not just the format on the same refused client.
+                attempt_opts.update(media_options(url, client))
             if youtube and client == "web":
                 # SABR supplies media through a different transport, not signed HTTPS URLs.
                 attempt_opts["format"] = ("bestaudio[protocol=sabr]" if kind == "MP3" else
@@ -292,5 +299,6 @@ def download_media(url, kind, quality, directory, progress=None):
         return result
     except yt_dlp.utils.DownloadError as error:
         # A missing last-resort format must not conceal the original refusal.
-        cause = next((failure for failure in [*failures, *logger.messages] if "403" in failure or "forbidden" in failure.lower()), str(error))
-        raise MediaError(friendly_error(cause), download_diagnostics([*logger.messages, *failures], opts)) from error
+        detail = [*logger.messages, *failures, *TOKEN_FAILURES[-4:]]
+        cause = next((entry for entry in detail if "403" in entry or "forbidden" in entry.lower()), str(error))
+        raise MediaError(friendly_error(cause), download_diagnostics(detail, opts)) from error
