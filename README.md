@@ -30,7 +30,7 @@ The results include a **File name** field. Edit it and press **Apply name** (or 
 
 Choose a platform and MP4/MP3, paste a single video URL, and press **GetVideo**. Choose an available resolution or MP3 conversion bitrate, press **Prepare**, then preview and download the finished file. MP4 choices reflect source resolutions; other containers are remuxed when necessary. Browser playback depends on support for the source codec. MP3 conversion cannot improve the original audio. Animated discovery, download progress, and conversion status communicate each processing stage.
 
-Public videos only; no login or restriction bypass. Platform availability, rate limits, regional restrictions, and extractor changes can prevent a download. Update yt-dlp when a platform changes. Downloads are limited to 250 MB and temporary files are removed after processing. The prepared file is held in the user's Streamlit session; changing inputs clears the result.
+Public videos only; no login or restriction bypass. Platform availability, rate limits, regional restrictions, and extractor changes can prevent a download. Update yt-dlp when a platform changes. Downloads are limited to 250 MB and temporary files are removed after processing. The prepared file is held in the user's Streamlit session; changing inputs clears the result. If the app owner configures `GETVIDEO_COOKIES`, requests are made as that signed-in account, which is their decision to make and which the README documents.
 
 This is a local application. Before exposing it publicly, add service-level rate limits, concurrency limits, authentication as appropriate, and restricted outbound networking. URL validation restricts initial links to the selected platform; it is not a complete network sandbox for upstream redirects.
 
@@ -42,19 +42,29 @@ Production uses `server.fileWatcherType = "none"` to avoid Streamlit's module-re
 
 If all YouTube formats fail from Community Cloud while the same URL downloads locally, changing MP3 bitrates is not a reliable fix. Media requests are being refused before FFmpeg conversion. Node/EJS solves JavaScript challenges; it does not supply playback tokens. GetVideo can fall back to yt-dlp's recommended `mweb` client with automatic GVS Proof of Origin tokens through `bgutil-ytdlp-pot-provider` for both MP3 and MP4 (https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).
 
-### Hosted deployments need an outbound proxy
+### Hosted deployments: cookies or a proxy
 
-**This is the fix for HTTP 403 / "Sign in to confirm you're not a bot" on Streamlit Community Cloud.** Those are IP-based blocks: video platforms refuse datacentre IP ranges at the media CDN, so the same public link downloads on a home connection and fails on the cloud host. No client, token, or format change can repair a refusal that happens before any media bytes arrive, and metadata can still succeed while every media request is blocked.
+**This is the fix for HTTP 403 / "Sign in to confirm you're not a bot" on Streamlit Community Cloud.** Those are IP-based refusals at the media CDN: platforms block datacentre IP ranges, so the same public link downloads on a home connection and fails on the cloud host. No client, token, or format change can repair a refusal that happens before any media bytes arrive, and metadata can still succeed while every media request is blocked.
 
-Set a residential proxy in `.streamlit/secrets.toml` (create the file; it is gitignored):
+Two optional secrets, both set in **Manage app → Secrets**. Neither is needed locally, since home IPs are not blocked.
 
-```toml
+**1. Cookies (free).** The bot wall asks for a signed-in session, so a cookie export is the free route. Export Netscape-format `cookies.txt` from a signed-in browser session using a cookies.txt extension, then add it as a single secret:
+
+```
+GETVIDEO_COOKIES
+```
+
+Paste the whole file contents as the value. The app writes it once per process to a private temp file and passes it to yt-dlp as `cookiefile`. Use an account you are willing to expose, because a public app's requests are made as that signed-in user. Cookies expire every few weeks, so expect to re-export when downloads start failing again.
+
+**2. Proxy (paid, more reliable).** For a residential proxy:
+
+```
 GETVIDEO_PROXY = "http://user:pass@host:port"
 ```
 
-`GETVIDEO_PROXY` is also read from the environment, so it can be set as a Streamlit Cloud secret instead. The value is passed to yt-dlp as its `proxy` option, so it must be a URL yt-dlp accepts (`http://`, `https://`, `socks5://`). Leave it unset for local runs: home IPs are not blocked, and a proxy only adds latency. When no proxy is configured, the 403 and bot-wall errors say so explicitly, and **Download error details** reports `Outbound proxy configured: False`.
+Passed to yt-dlp as its `proxy` option; `http://`, `https://`, and `socks5://` are accepted. `GETVIDEO_PROXY` is also read from the environment. Cheap datacentre proxies score the same as the host IP and rarely help; use a residential or ISP exit.
 
-Cheap datacentre proxies score the same as the host IP and rarely help; use a residential or ISP exit.
+When neither is configured, the 403 and bot-wall errors say so explicitly, and **Download error details** reports `Outbound proxy configured` and `Cookies configured`. Cookie values and the temp file path never appear in diagnostics.
 
 ### Client ladder
 

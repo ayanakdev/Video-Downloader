@@ -15,17 +15,45 @@ from download_details import download_filename, format_size
 from gallery_downloads import download_post
 from gallery_ui import render_gallery
 
-# Cloud and datacentre IP ranges are blocked by video platforms. Setting
-# GETVIDEO_PROXY in Streamlit secrets (or the environment) to a residential
-# proxy is what makes hosted downloads work; home IPs need no proxy.
+# Cloud and datacentre IP ranges are blocked by video platforms, and YouTube's
+# bot wall asks for a signed-in session. Two optional secrets fix hosted
+# downloads, both unset locally because home IPs need neither:
+#   GETVIDEO_PROXY   residential proxy URL, passed to yt-dlp as its proxy option
+#   GETVIDEO_COOKIES contents of a Netscape-format cookies.txt export
 try:
-    _proxy = st.secrets.get("GETVIDEO_PROXY")
+    _secrets = st.secrets
 except Exception:
-    _proxy = None
-_proxy = (_proxy or "").strip() if isinstance(_proxy, str) else ""
+    _secrets = None
+
+
+def _secret(name):
+    try:
+        value = _secrets.get(name) if _secrets is not None else None
+    except Exception:
+        return ""
+    return value.strip() if isinstance(value, str) else ""
+
+
+_proxy = _secret("GETVIDEO_PROXY")
 if _proxy:
     import os
     os.environ["GETVIDEO_PROXY"] = _proxy
+
+_cookies = _secret("GETVIDEO_COOKIES")
+if _cookies:
+    import os
+    import stat
+    import tempfile
+    # yt-dlp wants a path, so materialise the secret once per app process in a
+    # private temp file. It holds account cookies, so keep it owner-readable only.
+    _handle, _path = tempfile.mkstemp(prefix="getvideo-cookies-", suffix=".txt")
+    with os.fdopen(_handle, "w", encoding="utf-8") as _file:
+        _file.write(_cookies if _cookies.endswith("\n") else _cookies + "\n")
+    try:
+        os.chmod(_path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
+    os.environ["GETVIDEO_COOKIE_FILE"] = _path
 
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="GetVideo — Keep the good stuff.", page_icon=str(ROOT / "assets/videogetLOGO.png"), layout="centered")

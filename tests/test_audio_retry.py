@@ -53,6 +53,37 @@ class AudioRetryTests(unittest.TestCase):
         finally:
             os.environ.pop("GETVIDEO_PROXY", None)
 
+    def test_cookies_are_applied_only_when_a_real_file_exists(self):
+        os.environ.pop("GETVIDEO_COOKIE_FILE", None)
+        self.assertNotIn("cookiefile", options())
+        # A stale path from a previous process must not be handed to yt-dlp.
+        os.environ["GETVIDEO_COOKIE_FILE"] = "/nonexistent/getvideo-cookies.txt"
+        try:
+            self.assertNotIn("cookiefile", options())
+        finally:
+            os.environ.pop("GETVIDEO_COOKIE_FILE", None)
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as handle:
+            handle.write("# Netscape HTTP Cookie File\n")
+            cookie_path = handle.name
+        os.environ["GETVIDEO_COOKIE_FILE"] = cookie_path
+        try:
+            self.assertEqual(options()["cookiefile"], cookie_path)
+        finally:
+            os.environ.pop("GETVIDEO_COOKIE_FILE", None)
+            os.unlink(cookie_path)
+
+    def test_cookie_values_never_reach_the_diagnostics(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as handle:
+            handle.write("# Netscape HTTP Cookie File\n")
+            cookie_path = handle.name
+        try:
+            report = download_diagnostics(["ERROR: cookie: SID=topsecretvalue"], {"cookiefile": cookie_path})
+        finally:
+            os.unlink(cookie_path)
+        self.assertIn("Cookies configured: True", report)
+        self.assertNotIn("topsecretvalue", report)
+        self.assertNotIn(cookie_path, report)
+
     def test_refusal_names_the_missing_proxy_on_hosted_deployments(self):
         bot_wall = "ERROR: [youtube] 7Wi38uVsW98: Sign in to confirm you're not a bot."
         os.environ.pop("GETVIDEO_PROXY", None)

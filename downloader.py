@@ -42,6 +42,7 @@ def download_diagnostics(errors, settings):
     packages.append(f"Local token provider configured: {bool(settings.get('extractor_args', {}).get('youtubepot-bgutilhttp'))}")
     packages.append(f"IPv4 forced: {bool(settings.get('force_ipv4'))}")
     packages.append(f"Outbound proxy configured: {bool(settings.get('proxy'))}")
+    packages.append(f"Cookies configured: {bool(settings.get('cookiefile'))}")
     for entry in errors:
         entry = re.sub(r"\x1b\[[0-9;]*m", "", str(entry))
         entry = re.sub(r"https?://\S+", "[URL omitted]", entry)
@@ -89,6 +90,17 @@ def proxy_url():
     return os.environ.get("GETVIDEO_PROXY", "").strip() or None
 
 
+def cookie_file():
+    """Path to a Netscape cookies.txt, written from app config by the entry point.
+
+    A signed-in session is the only free way past a datacentre IP block, because
+    the bot wall asks for authentication. app.py resolves the configured value
+    to a real file and exports the path here; unset means no cookies.
+    """
+    path = os.environ.get("GETVIDEO_COOKIE_FILE", "").strip()
+    return path if path and Path(path).is_file() else None
+
+
 def options():
     node_path = shutil.which("node")
     spec = importlib.util.find_spec("nodejs_wheel")
@@ -117,6 +129,9 @@ def options():
     proxy = proxy_url()
     if proxy:
         settings["proxy"] = proxy
+    cookies = cookie_file()
+    if cookies:
+        settings["cookiefile"] = cookies
     return settings
 
 
